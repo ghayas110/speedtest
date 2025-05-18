@@ -1,147 +1,91 @@
+// app/page.tsx
 'use client';
 
-import { useState, useEffect } from 'react';
-import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
-import 'react-circular-progressbar/dist/styles.css';
+import { useEffect, useState } from 'react';
+import { Button } from './ui/Button';
+import { NEXT_CACHE_TAG_MAX_LENGTH } from 'next/dist/lib/constants';
 
-export default function SpeedTest() {
+export default function Home() {
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
   const [downloadSpeed, setDownloadSpeed] = useState<number | null>(null);
   const [uploadSpeed, setUploadSpeed] = useState<number | null>(null);
   const [ping, setPing] = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [history, setHistory] = useState<any[]>([]);
 
-  useEffect(() => {
-    const stored = localStorage.getItem('speedTestHistory');
-    if (stored) setHistory(JSON.parse(stored));
-  }, []);
-
-  const saveResult = (ping: number, download: number, upload: number) => {
-    const newResult = {
-      timestamp: new Date().toLocaleString(),
-      ping,
-      download,
-      upload,
-    };
-    const updatedHistory = [newResult, ...history].slice(0, 5); // Limit to 5 entries
-    setHistory(updatedHistory);
-    localStorage.setItem('speedTestHistory', JSON.stringify(updatedHistory));
-  };
-
-  const testSpeed = async () => {
+  const handleTest = async () => {
     setLoading(true);
+    setResult(null);
     setDownloadSpeed(null);
     setUploadSpeed(null);
     setPing(null);
 
     try {
-      // Ping Test (Cloudflare)
+      // Ping
       const startPing = performance.now();
-      await fetch('https://www.cloudflare.com/cdn-cgi/trace');
+      await fetch('https://www.cloudflare.com/cdn-cgi/trace', { mode: 'cors' });
       const endPing = performance.now();
       const pingValue = Number((endPing - startPing).toFixed(2));
       setPing(pingValue);
 
-      // Download Speed Test (parallel)
-      const downloadSize = 20 * 1024 * 1024 * 8; // 20MB in bits
-      const parallel = 4;
+      // Download
       const downloadStart = performance.now();
-      await Promise.all(
-        Array.from({ length: parallel }).map(() => fetch('/api/download').then(r => r.blob()))
-      );
+      const response = await fetch('/api/download');
+      await response.blob();
       const downloadEnd = performance.now();
-      const duration = (downloadEnd - downloadStart) / 1000;
-      const totalBits = downloadSize * parallel;
-      const downloadValue = Number((totalBits / duration / 1024 / 1024).toFixed(2));
+      const downloadDuration = (downloadEnd - downloadStart) / 1000;
+      const bitsLoaded = 5 * 1024 * 1024 * 8;
+      const downloadValue = Number((bitsLoaded / downloadDuration / 1024 / 1024).toFixed(2));
       setDownloadSpeed(downloadValue);
 
-      // Upload Speed Test
-      const uploadSize = 10 * 1024 * 1024; // 10MB
+      // Upload
       const uploadStart = performance.now();
-      const uploadResponse = await fetch('/api/upload', {
+      await fetch('https://httpbin.org/post', {
         method: 'POST',
-        body: new Blob([new ArrayBuffer(uploadSize)]),
+        body: new Blob([new ArrayBuffer(2 * 1024 * 1024)]),
       });
-      if (!uploadResponse.ok) throw new Error('Upload failed');
       const uploadEnd = performance.now();
       const uploadDuration = (uploadEnd - uploadStart) / 1000;
-      const uploadBits = uploadSize * 8;
+      const uploadBits = 2 * 1024 * 1024 * 8;
       const uploadValue = Number((uploadBits / uploadDuration / 1024 / 1024).toFixed(2));
       setUploadSpeed(uploadValue);
 
-      saveResult(pingValue, downloadValue, uploadValue);
+      setResult({
+        ping: { latency: pingValue },
+        download: { bandwidth: downloadSpeed ? downloadSpeed * 1e6 / 8 : downloadValue * 1e6 / 8 },
+        upload: { bandwidth: uploadSpeed ? uploadSpeed * 1e6 / 8 : uploadValue * 1e6 / 8 },
+        server: { name: 'N/A', location: 'N/A' },
+        isp: 'N/A',
+      });
     } catch (error) {
       setPing(null);
       setDownloadSpeed(null);
       setUploadSpeed(null);
       alert('Speed test failed. Please try again.');
     }
-
     setLoading(false);
   };
 
-  const renderGauge = (label: string, value: number | null, max: number, unit: string) => (
-    <div className="w-32">
-      <CircularProgressbar
-        value={value || 0}
-        maxValue={max}
-        text={value !== null ? `${value} ${unit}` : '...'}
-        styles={buildStyles({
-          textSize: '12px',
-          pathColor: '#000',
-          textColor: '#333',
-          trailColor: '#eee',
-        })}
-      />
-      <p className="text-sm text-center mt-1">{label}</p>
-    </div>
-  );
-
   return (
-    <div className="max-w-2xl mx-auto p-6 bg-white rounded-lg shadow-lg mt-10 text-center">
-      <h2 className="text-2xl font-bold mb-4">Internet Speed Analyzer</h2>
-      <button
-        onClick={testSpeed}
-        className="bg-black text-white py-2 px-6 rounded hover:bg-gray-800 transition"
-        disabled={loading}
-      >
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 text-center px-4">
+      <h1 className="text-4xl font-bold mb-6">Internet Speed Test</h1>
+      <Button onClick={handleTest} disabled={loading} className="mb-6">
         {loading ? 'Testing...' : 'Start Test'}
-      </button>
-
-      {loading && <p className="mt-4 text-sm text-gray-500">Running speed test...</p>}
-
-      <div className="flex justify-around mt-6 space-x-4">
-        {renderGauge('Ping', ping, 300, 'ms')}
-        {renderGauge('Download', downloadSpeed, 100, 'Mbps')}
-        {renderGauge('Upload', uploadSpeed, 100, 'Mbps')}
-      </div>
-
-      <div className="mt-8 text-left">
-        <h3 className="text-lg font-semibold mb-2">Test History</h3>
-        {history.length === 0 ? (
-          <p className="text-gray-500">No tests run yet.</p>
-        ) : (
-          <ul className="text-sm space-y-2">
-            {history.map((item, idx) => (
-              <li key={idx} className="border p-2 rounded bg-gray-50">
-                <strong>{item.timestamp}</strong> — 🕒 {item.ping}ms ↓ {item.download}Mbps ↑ {item.upload}Mbps
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {history.length > 0 && (
-          <button
-            className="mt-4 text-sm text-red-500 underline"
-            onClick={() => {
-              setHistory([]);
-              localStorage.removeItem('speedTestHistory');
-            }}
-          >
-            Clear History
-          </button>
-        )}
-      </div>
+      </Button>
+      {result && (
+        <div className="bg-white shadow-xl rounded-xl p-6 w-full max-w-xl">
+          {result.error ? (
+            <p className="text-red-500">{result.error}</p>
+          ) : (
+            <>
+              <p><strong>Ping:</strong> {result.ping.latency} ms</p>
+              <p><strong>Download:</strong> {(result.download.bandwidth * 8 / 1e6).toFixed(2)} Mbps</p>
+              <p><strong>Upload:</strong> {(result.upload.bandwidth * 8 / 1e6).toFixed(2)} Mbps</p>
+              <p><strong>Server:</strong> {result.server.name}, {result.server.location}</p>
+              <p><strong>ISP:</strong> {result.isp}</p>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }
